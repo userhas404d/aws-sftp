@@ -338,10 +338,7 @@ Resources:
   ElasticLoadBalancer:
     Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
     Properties:
-      LoadBalancerName: !Join
-        - ''
-        - - !Ref EnvironmentId
-          - '-Sftp'
+      LoadBalancerName: !Sub ${EnvironmentId}-Sftp
       ConnectionSettings:
         IdleTimeout: 300
       CrossZone: 'true'
@@ -401,185 +398,110 @@ Resources:
       KeyName: !Ref KeyName
       UserData: !Base64
         'Fn::Join':
-          - ''
-          - - |
+          Fn::Sub:
+            - |
               #!/bin/bash -x
-            - |
               apt-get -y update
-            - |
               apt-get -y install awscli
-            - export AWS_DEFAULT_REGION=
-            - !Ref 'AWS::Region'
-            - |+
+              export AWS_DEFAULT_REGION=${AWS::Region}
 
-            - |
               ####################
-            - |
               # Set up host keys
-            - |
               ####################
-            - |
-              cd /etc/ssh
-            - 'aws s3 cp s3://'
-            - !Ref AbbreviatedCompanyName
-            - '-'
-            - !Ref EnvironmentId
-            - >-
-              -keys/ftp/ . --recursive --exclude "*" --include "ssh_host*"
-              --region
-            - !Ref 'AWS::Region'
-            - |+
 
-            - |
+              cd /etc/ssh
+              aws s3 cp s3://${AbbreviatedCompanyName}-${EnvironmentId} \
+                -keys/ftp/ . --recursive --exclude "*" --include "ssh_host*" \
+                --region ${AWS::Region}
+
               chmod 600 *_key
-            - |
               chmod 644 *_key.pub
-            - |
+
               #################
-            - |
               # Install s3fs
-            - |
               #################
-            - >
+
               apt-get -y install build-essential libcurl4-openssl-dev
               libxml2-dev mime-support
-            - >
               apt-get -y install automake autotools-dev g++ git
               libcurl4-gnutls-dev libfuse-dev libssl-dev libxml2-dev make
               pkg-config
-            - |
+
               cd /usr/src/
-            - |
               git clone https://github.com/s3fs-fuse/s3fs-fuse.git
-            - |
               cd s3fs-fuse
-            - |
               ./autogen.sh
-            - |
               ./configure
-            - |
               make
-            - |
               make install
-            - |
+
               #################
-            - |
               # Setup SFTP
-            - |
               #################
-            - |
+
               groupadd sftpusers
-            - |
               groupadd sftpsuperusers
-            - >
+
+# bad sed line - fixme
               sed -i -e 's:Subsystem sftp
               /usr/lib/openssh/sftp-server:#Subsystem sftp
               /usr/lib/openssh/sftp-server:g' /etc/ssh/sshd_config
-            - |
               cat <<EOT >> /etc/ssh/sshd_config
-            - |
+
               #enable sftp
-            - |+
               Subsystem sftp internal-sftp
-
-            - |
               Match Group sftpusers
-            - |2
-                 ChrootDirectory %h #set the home directory
-            - |2
-                 ForceCommand internal-sftp
-            - |2
-                 X11Forwarding no
-            - |2
-                 AllowTCPForwarding no
-            - |2+
-                 PasswordAuthentication yes
 
-            - |
+              ChrootDirectory %h #set the home directory
+              ForceCommand internal-sftp
+              X11Forwarding no
+              AllowTCPForwarding no
+              PasswordAuthentication yes
               Match Group sftpsuperusers
-            - |2
-                 ChrootDirectory %h\.. #set the home directory
-            - |2
-                 ForceCommand internal-sftp
-            - |2
-                 X11Forwarding no
-            - |2
-                 AllowTCPForwarding no
-            - |2+
-                 PasswordAuthentication yes
-
-            - |
+              ChrootDirectory %h\.. #set the home directory
+              ForceCommand internal-sftp
+              X11Forwarding no
+              AllowTCPForwarding no
+              PasswordAuthentication yes
               EOT
-            - |
+
               service ssh restart
-            - |
               cd ~
-            - 'aws s3 cp s3://'
-            - !Ref AbbreviatedCompanyName
-            - '-'
-            - !Ref EnvironmentId
-            - |
-              -software/ftp/user-setup.sh .
-            - |
+# this bucketname can be moved to a local
+              aws s3 cp s3://${AbbreviatedCompanyName}-${EnvironmentId}-software/ftp/user-setup.sh .
               chmod 744 ./user-setup.sh
-            - |
               source ./user-setup.sh
-            - 'aws s3 cp s3://'
-            - !Ref AbbreviatedCompanyName
-            - '-'
-            - !Ref EnvironmentId
-            - |
-              -software/ftp/users.csv .
-            - 'process_users ./users.csv '
-            - !Ref SftpBucket
-            - ' '
-            - !Ref 'AWS::Region'
-            - |+
 
-            - |
+              aws s3 cp s3://${AbbreviatedCompanyName}-${EnvironmentId}-software/ftp/users.csv .
+              process_users ./users.csv
+              ${SftpBucket} ${AWS::Region}
+
               rm ./users.csv
-            - cfn-signal
-            - ' --exit-code $?'
-            - ' --stack '
-            - !Ref 'AWS::StackName'
-            - ' --resource ServerAutoScalingGroup'
-            - ' --region '
-            - !Ref 'AWS::Region'
-            - |+
 
-            - |
+              cfn-signal --exit-code $? \
+                --stack ${AWS::StackName} \
+                --resource ServerAutoScalingGroup \
+                --region ${AWS::Region}
+
               # set up AWS CloudWatch Logs
-            - |
               # Set up the CloudWatch Logs agent config file
-            - |
+# implement the better logic for this..
               mkdir -p /tmp/cwlogs/
-            - |
               cat <<EOT >> /tmp/cwlogs/serviceaccess.conf
-            - |
               [general]
-            - |+
               state_file= /var/awslogs/agent-state
 
-            - |
               [/var/log/syslog]
-            - |
               file = /var/log/syslog*
-            - 'log_group_name = '
-            - !Ref EnvironmentId
-            - |
-              SftpServer
-            - |
+              log_group_name = ${EnvironmentId}-SftpServer
               log_stream_name = syslog
-            - |
               datetime_format = %Y-%m-%d %H:%M:%S,%f
-            - |+
               multi_line_start_pattern = {datetime_format}
 
-            - |
               EOT
-            - |
+
               chmod 644 /tmp/cwlogs/serviceaccess.conf
-            - |
+
               # Get the CloudWatch Logs agent
             - >
               wget
@@ -617,10 +539,7 @@ Resources:
       Tags:
         - Key: Name
           PropagateAtLaunch: 'true'
-          Value: !Join
-            - ''
-            - - !Ref EnvironmentId
-              - '-SftpServer'
+          Value: !Sub ${EnvironmentId}-SftpServer
         - Key: Application
           PropagateAtLaunch: 'true'
           Value: SFTP
@@ -654,17 +573,10 @@ Resources:
     Type: 'AWS::Route53::RecordSetGroup'
     Condition: EnableDNSCondition
     Properties:
-      HostedZoneName: !Join
-        - ''
-        - - !Ref DNSZoneName
-          - .
+      HostedZoneName: !Sub ${DNSZoneName}.
       RecordSets:
-        - Name: !Join
-            - ''
-            - - !Ref DNSSubnet
-              - .
-              - !Ref DNSZoneName
-              - .
+        - Name:
+          !Sub ${DNSSubnet}.${DNSZoneName}.
           Type: A
           AliasTarget:
             HostedZoneId: !GetAtt
